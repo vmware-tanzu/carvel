@@ -73,6 +73,10 @@ same repository. This solution was adopted to protect copy functionality from th
 - Registries like `gcr.io` support paths in their Repositories while `hub.docker.io` does not. Copying an OCI Image
   from `gcr.io/my/specific/path/controller@sha256:aaaa` to `index.docker.io` is a challenge because we would lose
   information about the original OCI Image that can be significant.
+- Copying OCI Images to different repositories can require different user or authentication. When copying an OCI Image
+  to a particular Repository the user needs to have credentials to do so, in a scenario where the
+  repository `my.repo.io/controller` was previously created by a different user, the current user might not have
+  permission to copy the new OCI Image to that particular Repository.
 
 The adopted solution can solve the above problems, but it introduces some other problems, like the discoverability of
 the OCI Images when they are being used in Kubernetes context or other contexts, as it is expressed in the quotes
@@ -89,13 +93,12 @@ follow to place OCI Images in the desired locations.
 - Propose a solution for the problems in the [Problem Statement section](#problem-statement)
 - Maintain compatibility with the current implementation
 - Provide the minimum amount of strategies to solve current problems
-- Define API to provide the strategy information to `imgpkg`
+- Define API to provide the Strategy information to `imgpkg`
 - Define provisioning information for this strategy
 
 #### Non-goals
 
 - Provide all possible combinations of strategies for copying OCI Images
-- Ensure that destination Repository contains path information from Origin Repository
 - Provide strict implementation guide
 
 ### Specification / Use Cases
@@ -145,7 +148,7 @@ kind: CopyWithRename
 copyStrategy: same-repository
 ```
 
-If the Bundle contains a particular OCI Image that the user wants to place in a different Repository the following
+Given the Bundle contains a particular OCI Image that the user wants to place in a different Repository the following
 configuration can be used
 
 ```yaml
@@ -184,7 +187,7 @@ kind: CopyWithRename
 copyStrategy: maintain-repository
 ```
 
-This strategy also allow overrides
+This strategy also allows overrides
 
 ```yaml
 apiVersion: imgpkg.carvel.dev/v1alpha1
@@ -197,6 +200,132 @@ overrides:
 ```
 
 #### Overrides
+
+##### Assumptions
+
+- In the beginning, a few possible overrides will be provided, eventually only the exact match one
+- The user cannot copy different OCI Images to different registries
+
+##### Exact match
+
+This overrides will do an exact match of the OCI Image present in `.imgpkg/images.yml` and will copy the OCI Image to
+the Repository that is provided in the `destination` field
+
+Example of the override
+
+```yaml
+source:
+  matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+destination: my.private-registry.io/myname/exact-app
+```
+
+##### Match by Registry and Repository
+
+This Overrides the OCI Image that is present in `.imgpkg/images.yml` that is present in the Registry specified
+in `registry` and the Repository that is specified in `repository`.
+
+These will be exact matches for both `registry` and `repository`
+
+Example of the override
+
+```yaml
+source:
+  matchRegistryRepo:
+    registry: public-reg.io
+    repository: simple-app
+destination: my.private-registry.io/myname/simple-app
+```
+
+Result:
+
+The OCI Image present in `public-reg.io/simple-app` will be copied to `my.private-registry.io/myname/simple-app`. As you
+can see by this example it assumes that in the `.imgpkg/images.yml` file there is 1 entry that will
+match `public-reg.io/simple-app@sha256:*`
+
+#### Nested bundles considerations
+
+If we assume the following bundle
+
+```
+other.registry.io/main-bundle
+  - another.registry.io/img2
+  - yet.another.registry.io/nested-bundle-2
+    - world.io/img3
+```
+
+When we are trying to copy `other.registry.io/main-bundle` to `registry.acme.io/main-bundle` we will have to find all
+the OCI Images that are part of this bundle. Given that we no longer can assume that a given OCI Image is in the
+original location or the same Repository as the bundle we will have to store that information somewhere.
+
+1. Create the nested-bundle-2 with the following ImagesLock file
+   ```yaml
+   apiVersion: imgpkg.carvel.dev/v1alpha1
+   kind: ImagesLock
+   images:
+   - image: world.io/img3@sha256:aaaaaaaaaa
+   ```
+
+   `imgpkg push -b yet.another.registry.io/nested-bundle-2 -f folder1`
+
+1. Copy `yet.another.registry.io/nested-bundle-2` to the Registry `other.registry.io`
+   `imgpkg copy -b yet.another.registry.io/nested-bundle-2@sha256:bbbbbbbbbb --to-repo other.registry.io/main-bundle`
+
+1. Create `other.registry.io/main-bundle`
+
+   Using the following ImagesLock
+   ```yaml
+   apiVersion: imgpkg.carvel.dev/v1alpha1
+   kind: ImagesLock
+   images:
+   - image: other.registry.io/nested-bundle-2@sha256:bbbbbbbbbb
+   ```
+
+   `imgpkg push -b other.registry.io/main-bundle -f folder2`
+
+When we prepare to copy this new bundle we need to consider that the OCI Image `world.io/img3@sha256:aaaaaaaaaa` can be
+found in the following places:
+
+- other.registry.io/main-bundle@sha256:aaaaaaaaaa
+- other.registry.io/nested-bundle-2@sha256:aaaaaaaaaa
+- yet.another.registry.io/nested-bundle-2@sha256:aaaaaaaaaa
+- world.io/img3@sha256:aaaaaaaaaa
+- Or any other place the OCI Image was copied to using a strategy in this proposal
+
+To try to address this problem we can create a new OCI Image that contains 1 layer with 1 file
+called `images-locations.yml` that will have the following layout
+
+```yaml
+apiVersion: imgpkg.carvel.dev/v1alpha1
+kind: ImagesLocator
+images:
+  - origin: world.io/img3@sha256:aaaaaaaaaa
+    location: yet.another.registry.io/nested-bundle-2@sha256:aaaaaaaaaa
+```
+
+Field explanation:
+
+- `images` In this Array, all images defined in `.imgpkg/images.yml` MUST be present.
+- `origin` This value MUST match to an OCI Image defined in `.imgpkg/images.yml` for the Bundle
+- `location` Is the location where this OCI Image was copied to.
+
+When copying a Bundle between Registries and/or Repositories this new OCI Image will be created in the destination
+Repository and will be tagged with the tag `imgpkg-images-locator-{Bundle SHA}`. This is not a perfect solution since
+Tags are mutable, but this will fix the problem for now.
+
+##### Caveat
+
+Since `imgpkg` would be using tags to find the new location for the OCI Images of a particular Bundle there is no
+guarantee that this
+
+### Use Cases
+
+#### As a User When I inspect my Kubernetes Manifest I can identify the origin of the OCI Images that is running
+
+#### As a User When I can copy a Bundle to my local Registry to run one of the OCI Images
+
+#### As a User When I look at the OCI Images in a Registry I am able to easily understand what each OCI Images is used for
+
+#### As a User When I have a Bundle with a big number of OCI Images I want to be able to create the CopyWithRename file easily
 
 ### Other Approaches Considered
 
@@ -215,6 +344,9 @@ overrides:
     - Kubernetes Manifest would still be hard to understand where a particular OCI Image is from
     - Require `imgpkg` to decode this information from the Bundle
 
+  In summary, we believe that this could help the users find the OCI Images and provide other helpful information about
+  the Bundle. Nevertheless, the first con feels like we are not helping a big group of our users.
+
 - Tagging with origin Registry and Repository each OCI Image and copy OCI Images to the Bundle Repository
 
   The idea behind this approach would be to continue with the current behavior but whenever an OCI Image is copied it
@@ -229,31 +361,50 @@ overrides:
     - If the Digest is not included in Tag, the Tag might be overwritten if we copy a newer version of the bundle
     - Is easier to find the original location but still would be hard if the user wanted to run the OCI image
       using `docker run` or `podman run`
+    - Kubernetes Manifest would still be hard to understand where a particular OCI Image is from
+
+  In summary, we believe this could help find the OCI Images in question by reading the tag. Nevertheless, these tags
+  would not be provided to Kubernetes Manifests, which would not be very helpful to a big group of our users.
 
 ## Open Questions
 
-- Who will `imgpkg` know where to find the OCI Images after they are copied?
-
-  The problem can happen if a user copies a Bundles from Registry A -> Registry B and afterwards a different user wants
-  to copy the Bundle from Registry B to Registry C, how might `imgpkg` know where to get the Images from?
-
-- What are the implication for Nested Bundles?
-
-  The same problem as the above questions but we need to understand if there is any drawback on the Nested Bundles case
-
-- Will we need to keep some records about the location of the OCI Images after the first copy?
-
-    - If we need how might we save that in a place that `imgpkg` can easily retrieve in the future?
-    - Maybe a new OCI Image in the Bundle Repository with a TAG that we know about?
-
-- Can we wait for the Artifact OCI spec change be complete?
+- Can we wait for the Artifact OCI spec change to be complete?
 
     - If we waited what would be the drawbacks?
     - Do we need to wait for it to be able to implement this feature?
 
 - What is the good initial chunk of work that would make more sense?
 - Would it be helpful to implement some intermediate steps while we build this feature?
+- Can we in a first approach just provide a command-line flag to change strategies?
+    - Would this reduce the total amount of complexity of this feature?
+- Should copying OCI Images to different Registries be allowed?
+
+  My initial inclination is to do not allow and even raise an error if the Registries do not match.
 
 ## Answered Questions
 
-_A list of questions that have been answered._
+- How will `imgpkg` know where to find the OCI Images after they are copied?
+
+  The problem can happen if a user copies a Bundles from Registry A -> Registry B and afterward a different user wants
+  to copy the Bundle from Registry B to Registry C, how might `imgpkg` know where to get the Images from?
+
+  **Answer:** Created a new OCI Image that will store this information, for more details
+  check [Nested bundles considerations section](#nested-bundles-considerations)
+- What is the implication for Nested Bundles?
+
+  The same problem as the above questions, but we need to understand if there is any drawback on the Nested Bundles case
+
+  **Answer:** The main drawback is the need to retain information to about where an OCI Image can be found, for more
+  details check [Nested bundles considerations section](#nested-bundles-considerations)
+
+- Will we need to keep some records about the location of the OCI Images after the first copy?
+
+    - If we need how might we save that in a place that `imgpkg` can easily retrieve in the future?
+
+      **Answer:** we need to save this information. In case we do not do it we will have to assume we do not know where
+      the OCI Images can be found. This will not be a problem if the OCI Images are copied with the Strategy to maintain
+      all the OCI Images inside the same Repository where the Bundles are stored
+    - Maybe a new OCI Image in the Bundle Repository with a TAG that we know about?
+
+      **Answer:** This was the approach selected but this have a big caveat, for more details
+      check [Nested bundles considerations section](#nested-bundles-considerations)
