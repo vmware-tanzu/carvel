@@ -411,11 +411,56 @@ guarantee that this
 
 #### As a User When I inspect my Kubernetes Manifest I can identify the origin of the OCI Images that is running
 
+**Goals**
+
+- Provide a way for a tool that manages the Manifests to update the images with the more up to date location of an Image
+
+**Non-goals**
+
+- `imgpkg` be aware of Kubernetes Manifests
+
+**How might `imgpkg` help to accomplish this Use Case:**
+
+- Maintaining annotations provided in ImagesLock
+- Allow the user to customize the copy of OCI Images to match a naming convention that could help the user identify the
+  original OCI Image using only the Repository name
+- Ensure that tags present in the ImagesLock folder are maintained when OCI Images are copied
+
 #### As a User When I can copy a Bundle to my local Registry to run one of the OCI Images
+
+**Goals**
+
+- Provide a way for users to know how to find the OCI Image they want to run
+
+**Non-goals**
+
+- `imgpkg` understand how to run images
+
+**How might `imgpkg` help to accomplish this Use Case:**
+
+- Allow the user to customize the copy of OCI Images to match a naming convention that could help the user identify the
+  original OCI Image using only the Repository name
+- Ensure that tags present in the ImagesLock folder are maintained when OCI Images are copied
 
 #### As a User When I look at the OCI Images in a Registry I am able to easily understand what each OCI Images is used for
 
+**Goals**
+
+- Provide a way for users to differentiate OCI Image by looking at the Repository name
+
+**How might `imgpkg` help to accomplish this Use Case:**
+
+- Allow the user to customize the copy of OCI Images to match a naming convention that could help the user identify the
+  original OCI Image using only the Repository name
+- Ensure that tags present in the ImagesLock folder are maintained when OCI Images are copied
+
 #### As a User When I have a Bundle with a big number of OCI Images I want to be able to create the CopyConfig file easily
+
+**How might `imgpkg` help to accomplish this Use Case:**
+
+- New command that generates a configuration file from a Bundle
+
+  `imgpkg tools generate copy-config -b repo.io/bundle@sha256:aaaaaa -o /tmp/copy-config.yml`
 
 ### Implementation breakdown
 
@@ -474,6 +519,7 @@ overrides:
 ```
 
 Overrides available:
+
 - `matchExact` matches exactly the OCI Image location
 - `matchRegistryRepo` matches exactly the Registry and Repository
 
