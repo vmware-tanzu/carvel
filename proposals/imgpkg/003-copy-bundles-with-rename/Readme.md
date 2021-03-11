@@ -242,13 +242,24 @@ overrides:
 This overrides will do an exact match of the OCI Image present in `.imgpkg/images.yml` and will copy the OCI Image to
 the Repository that is provided in the `destination` field
 
-Example of the override
+Example of the override using a SHA
 
 ```yaml
 source:
   matchExact: public-reg.io/exact-app@sha256:aaaaaaa
 destination: my.private-registry.io/myname/exact-app
 ```
+
+Example of override using a Tag
+
+```yaml
+source:
+  matchExact: public-reg.io/exact-app:some-tag
+destination: my.private-registry.io/myname/exact-app
+```
+
+In the case of matchExact with tag `imgpkg` will have to do the matching using both the Registry+Repository and the
+annotation `imgpkg.carvel.dev/image-tags` to determine if a particular OCI Image match
 
 ##### Match by Registry and Repository
 
@@ -295,7 +306,7 @@ mappingFunctionYttStar: |
   end
 ```
 
-The mapping function will have to respect the following definition `process(string) -> string`.
+The mapping function will have to respect the following definition `process(string, []string) -> string`.
 
 To help users to create simpler mapping the following functions will be available:
 
@@ -315,6 +326,23 @@ Return:
 - `True` if the `image` matches the Regular Expression
 - `False` if the `image` does not match the regular expression
 
+##### registry
+
+Function will remove all information from an OCI Image except the registry location.
+
+Definition: `def registry(image) -> string`
+
+Parameters:
+
+- `image` string with the Registry + Repository of the OCI Image
+
+Return: Registry URL
+
+**Examples:**
+
+- `registry(https://index.docker.io/u/ubuntu@sha256:aaaaaaaa)` will return `index.docker.io`
+- `registry(gcr.io/some/deep/path/my-image@sha256:aaaaaaaa)` will return `gcr.io`
+
 ##### repository
 
 Function will remove all information from an OCI Image location and return the Repository name.
@@ -331,6 +359,21 @@ Return: Repository name
 
 - `repository(https://index.docker.io/u/ubuntu@sha256:aaaaaaaa)` will return `ubuntu`
 - `repository(gcr.io/some/deep/path/my-image@sha256:aaaaaaaa)` will return `my-image`
+
+##### matchTag
+
+Function will check if a particular tag is associated in an OCI Image.
+
+Definition: `def matchTag(image, tag) -> string`
+
+Parameters:
+
+- `image` string with the Registry + Repository + SHA of the OCI Image
+- `tag` string with the tag to check
+
+Return:
+- `True` if the `tag` can be found in the annotation `imgpkg.carvel.dev/image-tags` for the `image`
+- `False` if the `tag` cannot be found in the annotation `imgpkg.carvel.dev/image-tags` for the `image`
 
 #### Nested bundles considerations
 
@@ -409,6 +452,13 @@ guarantee that this
 
 ### Use Cases
 
+#### As a User When I copy a Bundle I want to ensure tags present in ImagesLock file are preserved
+
+**How might `imgpkg` help to accomplish this Use Case:**
+
+- Add one new annotation `imgpkg.carvel.dev/image-tags` that supports a comma separated list of tags
+- While copying OCI Images `imgpkg` will read this annotation and will tag the OCI Image with the provided tags
+
 #### As a User When I inspect my Kubernetes Manifest I can identify the origin of the OCI Images that is running
 
 **Goals**
@@ -466,6 +516,23 @@ guarantee that this
 
 This is quite a big proposal that can take some time to implement. In this section we try to split the current work
 needed into multiple phases that could provide users with the most important parts of this feature as soon as possible.
+
+#### Phase 0 - Implement Tags preservation
+
+After this phase is complete the users would be able to:
+
+1. `imgpkg` will tag OCI Images when copying a Bundle
+1. `kbld` fill the new annotation with the tag values
+
+   This need to happen in operations:
+    - When `kbld` is creating a new OCI
+      Image, [reference](https://carvel.dev/kbld/docs/latest/config/#imagedestinations)
+    - When `kbld` is resolving OCI Images from configuration
+
+New annotation:
+
+Create Annotation `imgpkg.carvel.dev/image-tags` that will support a comma separated list of tags that should be applied
+to the OCI Images when they are being copied between Registries
 
 #### Phase 1 - Implementation of strategies
 
