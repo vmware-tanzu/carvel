@@ -114,24 +114,27 @@ apiVersion: imgpkg.carvel.dev/v1alpha1
 kind: CopyConfig
 strategy: SingleRepository
 overrides:
-  - source:
-      matchRegistryRepo:
-        registry: public-reg.io
-        repository: simple-app
+  - imageRepo: public-reg.io/simple-app
     destination: my.private-registry.io/myname/simple-app
-  - source:
-      matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+  - image: public-reg.io/exact-app@sha256:aaaaaaa
     destination: my.private-registry.io/myname/exact-app
 ```
 
 Fields:
 
-- `kind` Type of configuration, this value should always be `CopyConfig`. Used to allow `imgpkg` to understand what type
-  of configuration this document is defining
-- `strategy` This field will contain the Strategy that will be used by `imgpkg` the default value is `SingleRepository`.
-  Check the [Copy Strategies section](#copy-strategies) for more information.
-- `overrides` This is a list of overrides for the `strategy`. In this list, the user can define specific behavior for a
-  particular set of OCI Images. Check the [Overrides section](#overrides) for more information on overrides.
+- `apiVersion` (required; string) Version of this configuration.
+- `kind` (required; `CopyConfig`) Type of configuration, this value should always be `CopyConfig`. Used to
+  allow `imgpkg` to understand what type of configuration this document is defining
+- `strategy` (required; `SingleRepository|MaintainOriginRepository`) This field will contain the Strategy that will be
+  used by `imgpkg` the default value is `SingleRepository`. Check the [Copy Strategies section](#copy-strategies) for
+  more information.
+- `overrides` (optional; array of overrides) This is a list of overrides for the `strategy`. In this list, the user can
+  define specific behavior for a particular set of OCI Images. Check the [Overrides section](#overrides) for more
+  information on overrides.
+- `mappingFunctionYttStar` (optional; `ytt` starlark function) This field contains an implementation of a `ytt` starlark
+  function that will be responsible for creating a map between the OCI Images and the new locations
+
+**Note:** `overrides` and `mappingFunctionYttStar` cannot be present at the same time in a configuration.
 
 #### Copy Strategies
 
@@ -160,8 +163,7 @@ apiVersion: imgpkg.carvel.dev/v1alpha1
 kind: CopyConfig
 strategy: SingleRepository
 overrides:
-  - source:
-      matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+  - image: public-reg.io/exact-app@sha256:aaaaaaa
     destination: my.private-registry.io/myname/exact-app
 ```
 
@@ -206,8 +208,7 @@ apiVersion: imgpkg.carvel.dev/v1alpha1
 kind: CopyConfig
 strategy: MaintainOriginRepository
 overrides:
-  - source:
-      matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+  - image: public-reg.io/exact-app@sha256:aaaaaaa
     destination: my.private-registry.io/myname/exact-app
 ```
 
@@ -224,13 +225,13 @@ In the following example the `exact-app` OCI Image will be copied to `my.private
 
 ```yaml
 overrides:
-  - source:
-      matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+  - image: public-reg.io/exact-app@sha256:aaaaaaa
     destination: my.private-registry.io/myname/exact-app
-  - source:
-      matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+  - imageRepo: public-reg.io/exact-app
     destination: my.private-registry.io/image/will/not/be/copied/here
 ```
+
+**Note:** Cannot be present is the configuration contains the key `mappingFunctionYttStar`
 
 ##### Assumptions
 
@@ -242,23 +243,27 @@ overrides:
 This overrides will do an exact match of the OCI Image present in `.imgpkg/images.yml` and will copy the OCI Image to
 the Repository that is provided in the `destination` field
 
+Schema fields:
+
+- `image` (required; string) OCI Image that will be used to do an exact match. This can be an OCI Image with a Tag or a
+  SHA
+- `destination` (required; string) Registry and Repository the OCI Image will be copied to
+
 Example of the override using a SHA
 
 ```yaml
-source:
-  matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+image: public-reg.io/exact-app@sha256:aaaaaaa
 destination: my.private-registry.io/myname/exact-app
 ```
 
 Example of override using a Tag
 
 ```yaml
-source:
-  matchExact: public-reg.io/exact-app:some-tag
+image: public-reg.io/exact-app:some-tag
 destination: my.private-registry.io/myname/exact-app
 ```
 
-In the case of matchExact with tag `imgpkg` will have to do the matching using both the Registry+Repository and the
+In the case of exact matching with tag `imgpkg` will have to do the matching using both the Registry+Repository and the
 annotation `imgpkg.carvel.dev/image-tags` to determine if a particular OCI Image match
 
 ##### Match by Registry and Repository
@@ -268,13 +273,15 @@ in `registry` and the Repository that is specified in `repository`.
 
 These will be exact matches for both `registry` and `repository`
 
+Schema fields:
+
+- `imageRepo` (required; string) OCI Image that will be used to do an exact match on Registry and Repository.
+- `destination` (required; string) Registry and Repository the OCI Image will be copied to
+
 Example of the override
 
 ```yaml
-source:
-  matchRegistryRepo:
-    registry: public-reg.io
-    repository: simple-app
+imageRepo: public-reg.io/simple-app
 destination: my.private-registry.io/myname/simple-app
 ```
 
@@ -305,6 +312,8 @@ mappingFunctionYttStar: |
     return registry + repository(image)
   end
 ```
+
+**Note:** Cannot be present is the configuration contains the key `overrides`
 
 The mapping function will have to respect the following definition `process(string, []string) -> string`.
 
@@ -372,6 +381,7 @@ Parameters:
 - `tag` string with the tag to check
 
 Return:
+
 - `True` if the `tag` can be found in the annotation `imgpkg.carvel.dev/image-tags` for the `image`
 - `False` if the `tag` cannot be found in the annotation `imgpkg.carvel.dev/image-tags` for the `image`
 
@@ -575,20 +585,16 @@ apiVersion: imgpkg.carvel.dev/v1alpha1
 kind: CopyConfig
 strategy: (SingleRepository|MaintainOriginRepository)
 overrides:
-  - source:
-      matchRegistryRepo:
-        registry: public-reg.io
-        repository: simple-app
+  - imageRepo: public-reg.io/simple-app
     destination: my.private-registry.io/myname/simple-app
-  - source:
-      matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+  - image: public-reg.io/exact-app@sha256:aaaaaaa
     destination: my.private-registry.io/myname/exact-app
 ```
 
 Overrides available:
 
-- `matchExact` matches exactly the OCI Image location
-- `matchRegistryRepo` matches exactly the Registry and Repository
+- `image` matches exactly the OCI Image location
+- `imagesRepo` matches exactly the Registry and Repository
 
 #### Phase 3 - Add more complex mapping functionality
 
@@ -667,10 +673,11 @@ mappingFunctionYttStar: |
     - If we waited what would be the drawbacks?
     - Do we need to wait for it to be able to implement this feature?
 
-- What is the good initial chunk of work that would make more sense?
 - Would it be helpful to implement some intermediate steps while we build this feature?
+
 - Can we in a first approach just provide a command-line flag to change strategies?
     - Would this reduce the total amount of complexity of this feature?
+
 - Should copying OCI Images to different Registries be allowed?
 
   My initial inclination is to do not allow and even raise an error if the Registries do not match.
@@ -702,3 +709,8 @@ mappingFunctionYttStar: |
 
       **Answer:** This was the approach selected but this have a big caveat, for more details
       check [Nested bundles considerations section](#nested-bundles-considerations)
+
+- What is the good initial chunk of work that would make more sense?
+
+  **Answer:** Created [the section Implementation Breakdown](#implementation-breakdown) to try to split the work into
+  manageable phases
