@@ -77,13 +77,15 @@ same repository. This solution was adopted to protect copy functionality from th
   to a particular Repository the user needs to have credentials to do so, in a scenario where the
   repository `my.repo.io/controller` was previously created by a different user, the current user might not have
   permission to copy the new OCI Image to that particular Repository.
+- ECR requires users to create a Repository before pushing OCI
+  Images. [reference](https://docs.aws.amazon.com/AmazonECR/latest/userguide/docker-push-ecr-image.html)
 
 The adopted solution can solve the above problems, but it introduces some other problems, like the discoverability of
 the OCI Images when they are being used in Kubernetes context or other contexts, as it is expressed in the quotes
 provided in the [Problem Statement section](#Problem-Statement).
 
 With this proposal, we will introduce a mechanism to enable the users of `imgpkg` to decide the Repository where each
-OCI Image will be copied to. This will be archived by providing the `copy` command with a Strategy that `imgpkg` will
+OCI Image will be copied to. This will be achived by providing the `copy` command with a Strategy that `imgpkg` will
 follow to place OCI Images in the desired locations.
 
 ### Goals and Non-goals
@@ -109,8 +111,8 @@ The following example contains an example of the configuration YAML Document tha
 
 ```yaml
 apiVersion: imgpkg.carvel.dev/v1alpha1
-kind: CopyWithRename
-copyStrategy: same-repository
+kind: CopyConfig
+strategy: SingleRepository
 overrides:
   - source:
       matchRegistryRepo:
@@ -124,16 +126,18 @@ overrides:
 
 Fields:
 
-- `kind` Type of configuration, this value should always be `CopyWithRename`. Used to allow `imgpkg` to understand what
-  type of configuration this document is defining
-- `copyStrategy` This field will contain the Strategy that will be used by `imgpkg` the default value
-  is `same-repository`. Check the [Copy Strategies section](#copy-strategies) for more information.
-- `overrides` This is a list of overrides for the `copyStrategy`. In this list, the user can define specific behavior
-  for a particular set of OCI Images. Check the [Overrides section](#overrides) for more information on overrides.
+- `kind` Type of configuration, this value should always be `CopyConfig`. Used to allow `imgpkg` to understand what type
+  of configuration this document is defining
+- `strategy` This field will contain the Strategy that will be used by `imgpkg` the default value is `SingleRepository`.
+  Check the [Copy Strategies section](#copy-strategies) for more information.
+- `overrides` This is a list of overrides for the `strategy`. In this list, the user can define specific behavior for a
+  particular set of OCI Images. Check the [Overrides section](#overrides) for more information on overrides.
 
 #### Copy Strategies
 
-In this proposal, only 2 strategies will be defined, but in the future, more options can be made available
+In this proposal, only 2 strategies will be defined, but in the future, more options can be made available. These
+Strategies and Overrides will apply to all OCI Images that are contains in the Bundle that is being copied. Including
+all OCI Images from the current Bundle and Nested Bundles.
 
 ##### Copy all OCI Images to the same Repository as the Bundle
 
@@ -144,8 +148,8 @@ When defining the YAML configuration the user can provide the following configur
 
 ```yaml
 apiVersion: imgpkg.carvel.dev/v1alpha1
-kind: CopyWithRename
-copyStrategy: same-repository
+kind: CopyConfig
+strategy: SingleRepository
 ```
 
 Given the Bundle contains a particular OCI Image that the user wants to place in a different Repository the following
@@ -153,8 +157,8 @@ configuration can be used
 
 ```yaml
 apiVersion: imgpkg.carvel.dev/v1alpha1
-kind: CopyWithRename
-copyStrategy: same-repository
+kind: CopyConfig
+strategy: SingleRepository
 overrides:
   - source:
       matchExact: public-reg.io/exact-app@sha256:aaaaaaa
@@ -165,34 +169,42 @@ The above configuration will ensure that the OCI Image `public-reg.io/exact-app@
 to `my.private-registry.io/myname/exact-app@sha256:aaaaaaa`. For other options of matching check
 the [Overrides section](#overrides)
 
-##### Copy all OCI Images to the new Registry but maintain the Repository
+##### Copy all OCI Images to the new Registry but maintain the Original Repository name
 
 This strategy will copy each OCI Image to the target Registry and will store it in the same Repository as the OCI Image
 originated.
 
-**Examples:**
-
-|Original Registry and Repository|Final Registry and Repository|
-|---|---|
-|origin.io/my-image@sha256:aaaa|destination.io/my-image@sha256:aaaa|
-|origin.io/some/path/my-image@sha256:aaaa|destination.io/my-image@sha256:aaaa|
-|origin.io/my-image@sha256:aaaa|destination.io/destination/path/my-image@sha256:aaaa|
-|origin.io/user/initialmy-image@sha256:aaaa|destination.io/destination/path/my-image@sha256:aaaa|
-
-The configuration to accomplish this is
+When using the following configuration
 
 ```yaml
 apiVersion: imgpkg.carvel.dev/v1alpha1
-kind: CopyWithRename
-copyStrategy: maintain-repository
+kind: CopyConfig
+strategy: MaintainOriginRepository
 ```
+
+When copying a Bundle to `destination.io/bundle` all OCI Images will be copied
+to `destination.io/{Original Repository Name}`
+
+**Example:**
+
+- OCI Image from `origin.io/my-image@sha256:aaaa` will be copied to `destination.io/my-image@sha256:aaaa`
+- OCI Image from `origin.io/some/path/my-image@sha256:aaaa` will be copied to `destination.io/my-image@sha256:aaaa`
+
+When copying a Bundle to `destination.io/some/path/bundle` all OCI Images will be copied
+to `destination.io/some/path/{Original Repository Name}`
+
+**Example:**
+
+- OCI Image from `origin.io/my-image@sha256:aaaa` will be copied to `destination.io/some/path/my-image@sha256:aaaa`
+- OCI Image from `origin.io/image/origin/my-image@sha256:aaaa` will be copied
+  to `destination.io/some/path/my-image@sha256:aaaa`
 
 This strategy also allows overrides
 
 ```yaml
 apiVersion: imgpkg.carvel.dev/v1alpha1
-kind: CopyWithRename
-copyStrategy: maintain-repository
+kind: CopyConfig
+strategy: MaintainOriginRepository
 overrides:
   - source:
       matchExact: public-reg.io/exact-app@sha256:aaaaaaa
@@ -200,6 +212,25 @@ overrides:
 ```
 
 #### Overrides
+
+In the `overrides` section of the configuration a list of Matchers and Destinations should be present. All the OCI
+Images present in the Bundle, and Nested Bundles will be matched against this list, but only the OCI Images the user
+wish to Override should be present in this section. If an OCI Image do not Match any of these Overrides it will be
+copied based on the strategy defined.
+
+In the event that 2 Overrides match a particular OCI Image the first Override in the list takes precedence.
+
+In the following example the `exact-app` OCI Image will be copied to `my.private-registry.io/myname/exact-app`
+
+```yaml
+overrides:
+  - source:
+      matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+    destination: my.private-registry.io/myname/exact-app
+  - source:
+      matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+    destination: my.private-registry.io/image/will/not/be/copied/here
+```
 
 ##### Assumptions
 
@@ -242,6 +273,65 @@ The OCI Image present in `public-reg.io/simple-app` will be copied to `my.privat
 can see by this example it assumes that in the `.imgpkg/images.yml` file there is 1 entry that will
 match `public-reg.io/simple-app@sha256:*`
 
+#### Advanced Mapping Scenarios
+
+To enable more advanced matching integrating with `ytt` should be in the roadmap.
+
+Example of using `ytt` starlark function map an OCI Image with a destination
+
+```yaml
+apiVersion: imgpkg.carvel.dev/v1alpha1
+kind: CopyConfig
+strategy: MaintainOriginRepository
+mappingFunctionYttStar: |
+  def process(image):
+    registry = 'my.private-registry.io/'
+    if regexMatch(image, '.*image1.*')
+      return registry + 'myname/exact-app'
+    elif repository(image) == 'other-image'
+      return registry + 'some-other-repo'
+    end
+    return registry + repository(image)
+  end
+```
+
+The mapping function will have to respect the following definition `process(string) -> string`.
+
+To help users to create simpler mapping the following functions will be available:
+
+##### regexMatch
+
+Function that given an expression that is a Regular Expression, will check if the provided string matches.
+
+Definition: `def regexMatch(image, expression) -> boolean`
+
+Parameters:
+
+- `image` string with the Registry + Repository of the OCI Image
+- `expression` string with the Regular Expression that is being matched
+
+Return:
+
+- `True` if the `image` matches the Regular Expression
+- `False` if the `image` does not match the regular expression
+
+##### repository
+
+Function will remove all information from an OCI Image location and return the Repository name.
+
+Definition: `def repository(image) -> string`
+
+Parameters:
+
+- `image` string with the Registry + Repository of the OCI Image
+
+Return: Repository name
+
+**Examples:**
+
+- `repository(https://index.docker.io/u/ubuntu@sha256:aaaaaaaa)` will return `ubuntu`
+- `repository(gcr.io/some/deep/path/my-image@sha256:aaaaaaaa)` will return `my-image`
+
 #### Nested bundles considerations
 
 If we assume the following bundle
@@ -255,7 +345,7 @@ other.registry.io/main-bundle
 
 When we are trying to copy `other.registry.io/main-bundle` to `registry.acme.io/main-bundle` we will have to find all
 the OCI Images that are part of this bundle. Given that we no longer can assume that a given OCI Image is in the
-original location or the same Repository as the bundle we will have to store that information somewhere.
+original location, or the same Repository as the bundle we will have to store that information somewhere.
 
 1. Create the nested-bundle-2 with the following ImagesLock file
    ```yaml
@@ -296,20 +386,20 @@ called `images-locations.yml` that will have the following layout
 
 ```yaml
 apiVersion: imgpkg.carvel.dev/v1alpha1
-kind: ImagesLocator
+kind: ImageLocations
 images:
-  - origin: world.io/img3@sha256:aaaaaaaaaa
+  - image: world.io/img3@sha256:aaaaaaaaaa
     location: yet.another.registry.io/nested-bundle-2@sha256:aaaaaaaaaa
 ```
 
 Field explanation:
 
 - `images` In this Array, all images defined in `.imgpkg/images.yml` MUST be present.
-- `origin` This value MUST match to an OCI Image defined in `.imgpkg/images.yml` for the Bundle
+- `image` This value MUST match to an OCI Image defined in `.imgpkg/images.yml` for the Bundle
 - `location` Is the location where this OCI Image was copied to.
 
 When copying a Bundle between Registries and/or Repositories this new OCI Image will be created in the destination
-Repository and will be tagged with the tag `imgpkg-images-locator-{Bundle SHA}`. This is not a perfect solution since
+Repository and will be tagged with the tag `sha256-{Bundle SHA}-imgpkg.locations`. This is not a perfect solution since
 Tags are mutable, but this will fix the problem for now.
 
 ##### Caveat
@@ -325,7 +415,98 @@ guarantee that this
 
 #### As a User When I look at the OCI Images in a Registry I am able to easily understand what each OCI Images is used for
 
-#### As a User When I have a Bundle with a big number of OCI Images I want to be able to create the CopyWithRename file easily
+#### As a User When I have a Bundle with a big number of OCI Images I want to be able to create the CopyConfig file easily
+
+### Implementation breakdown
+
+This is quite a big proposal that can take some time to implement. In this section we try to split the current work
+needed into multiple phases that could provide users with the most important parts of this feature as soon as possible.
+
+#### Phase 1 - Implementation of strategies
+
+After this phase is complete the users would be able to:
+
+1. Copy OCI Images between registries choosing the strategy that best suites their needs.
+1. When user is copying Bundles and does not select a strategy, copy will use `SingleRepository` as the default
+   strategy.
+1. Pull a Bundle to disk and see the correct locations for all OCI Images in the Images Lock files.
+
+New Flags:
+
+- Copy command
+    - `-c filename` and `--configuration filename` provide the configuration to select a strategy
+
+API Implementation:
+At this point in time the user can only select a Copy Strategy that will apply to all OCI Images in the Bundle
+
+```yaml
+apiVersion: imgpkg.carvel.dev/v1alpha1
+kind: CopyConfig
+strategy: (SingleRepository|MaintainOriginRepository)
+```
+
+#### Phase 2 - Inclusion of simple overrides
+
+After this phase is complete the users would be able to:
+
+1. Copy OCI Images between registries choosing the strategy that best suites their needs.
+1. When user is copying Bundles and does not select a strategy, copy will use `SingleRepository` as the default
+   strategy.
+1. Pull a Bundle to disk and see the correct locations for all OCI Images in the Images Lock files.
+1. Create Overrides for the selected strategy
+
+API Implementation:
+At this point in time the user can select a Copy Strategy and Overrides that will apply to all OCI Images in the Bundle
+
+```yaml
+apiVersion: imgpkg.carvel.dev/v1alpha1
+kind: CopyConfig
+strategy: (SingleRepository|MaintainOriginRepository)
+overrides:
+  - source:
+      matchRegistryRepo:
+        registry: public-reg.io
+        repository: simple-app
+    destination: my.private-registry.io/myname/simple-app
+  - source:
+      matchExact: public-reg.io/exact-app@sha256:aaaaaaa
+    destination: my.private-registry.io/myname/exact-app
+```
+
+Overrides available:
+- `matchExact` matches exactly the OCI Image location
+- `matchRegistryRepo` matches exactly the Registry and Repository
+
+#### Phase 3 - Add more complex mapping functionality
+
+After this phase is complete the users would be able to:
+
+1. Copy OCI Images between registries choosing the strategy that best suites their needs.
+1. When user is copying Bundles and does not select a strategy, copy will use `SingleRepository` as the default
+   strategy.
+1. Pull a Bundle to disk and see the correct locations for all OCI Images in the Images Lock files.
+1. Create Overrides for the selected strategy
+1. Create a mapping function using `ytt` starlark
+
+API Implementation:
+At this point in time the user can select a Copy Strategy that will apply to all OCI Images in the Bundle. To create
+Overrides for the selected strategy the user will have to choose between Overrides or a Mapping function.
+
+```yaml
+apiVersion: imgpkg.carvel.dev/v1alpha1
+kind: CopyConfig
+strategy: (SingleRepository|MaintainOriginRepository)
+mappingFunctionYttStar: |
+  def process(image):
+    registry = 'my.private-registry.io/'
+    if regexMatch(image, '.*image1.*')
+      return registry + 'myname/exact-app'
+    elif repository(image) == 'other-image'
+      return registry + 'some-other-repo'
+    end
+    return registry + repository(image)
+  end
+```
 
 ### Other Approaches Considered
 
