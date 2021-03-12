@@ -1,7 +1,7 @@
 ---
 title: "Rename images when copying bundles"
 authors: [ "Joao Pereira <joaod@vmware.com>"]
-status: "draft"
+status: "in-review"
 approvers: [ "Dmitriy Kalinin <dkalinin@vmware.com>", "Eli Wrenn <ewrenn@vmware.com>", "John Ryan <ryanjo@vmware.com>" ]
 ---
 
